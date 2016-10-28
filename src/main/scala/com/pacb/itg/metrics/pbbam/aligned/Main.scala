@@ -14,9 +14,9 @@ import scala.concurrent.duration._
 object Main extends App {
 
 //  val ab = AlignedBam.calc(Paths.get("/Users/jfalkner/tokeep/bitbucket/itg/metrics-bam-aligned/example.bam")).toList.map(r => Await.result(r, 3 seconds))
-  val ab = new AlignedPacBioBam(Paths.get("/Users/jfalkner/tokeep/bitbucket/itg/metrics-bam-aligned/example.bam"))
+  val ab = AlignedPacBioBam(Paths.get("/Users/jfalkner/tokeep/bitbucket/itg/metrics-bam-aligned/example.bam"))
   JSON.write(Paths.get("example.json"), ab)
-  CSV.write(Paths.get("example.csv"), ab)
+  CSV(Paths.get("example.csv"), ab)
 
 //  // write them all to disk
 //

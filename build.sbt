@@ -33,7 +33,7 @@ libraryDependencies ++= {
 // allow code coverage via - https://github.com/scoverage/sbt-scoverage
 //coverageExcludedPackages := "<empty>;.*Export.*AsCSV.*"
 
-lazy val metrics = RootProject(uri("https://github.com/jfalkner/metrics.git#0.1.1"))
+lazy val metrics = RootProject(uri("https://github.com/jfalkner/metrics.git#0.1.3"))
 //lazy val metrics = RootProject(file("/Users/jfalkner/tokeep/git/jfalkner/metrics"))
 
 val main = Project(id = "itg_metrics_pbbam_aligned", base = file(".")).dependsOn(metrics)

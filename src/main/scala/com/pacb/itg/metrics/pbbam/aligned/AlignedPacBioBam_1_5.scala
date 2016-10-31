@@ -10,6 +10,7 @@ import scala.collection.immutable.ListMap
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.Duration
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success, Try}
 
@@ -52,17 +53,17 @@ class AlignedPacBioBam_1_5(p: Path, nBins: Int = 30) extends Metrics {
     DistCon("Mean of SnR G Mean", calcContinuous(reads.map(_.avgSnrG))),
     DistCon("Mean of SnR T Mean", calcContinuous(reads.map(_.avgSnrT))),
     // TODO: most of these quality dist are in a non-linear scale, not plain categories
-    CatDist("Del Quality", makeCategorical(sumQual((r) => r.delQV))),
-    CatDist("Del Tag", makeCategorical(sumQual((r) => r.delTag))),
-    CatDist("Ins Quality", makeCategorical(sumQual((r) => r.insQV))),
-    CatDist("Merge Quality", makeCategorical(sumQual((r) => r.mergeQV))),
-    CatDist("Substitution Quality", makeCategorical(sumQual((r) => r.subQV))),
-    CatDist("Substitution Tag", makeCategorical(sumQual((r) => r.subTag))),
-    CatDist("Label Quality", makeCategorical(sumQual((r) => r.labelQV))),
-    CatDist("Alt Label", makeCategorical(sumQual((r) => r.altLabel))),
-    CatDist("Alt Label Qual", makeCategorical(sumQual((r) => r.labelQV))),
-    CatDist("Pulse Merge Qual", makeCategorical(sumQual((r) => r.pulseMergeQV))),
-    CatDist("Pulse Call", makeCategorical(sumQual((r) => r.pulseCall))), // true categorical
+    //CatDist("Del Quality", makeCategorical(sumQual((r) => r.delQV)), qualKeys),
+    //CatDist("Del Tag", makeCategorical(mergeCategorical((r) => r.delTag))),
+    //CatDist("Ins Quality", makeCategorical(sumQual((r) => r.insQV)), qualKeys),
+    //CatDist("Merge Quality", makeCategorical(sumQual((r) => r.mergeQV)), qualKeys),
+    //CatDist("Substitution Quality", makeCategorical(sumQual((r) => r.subQV)), qualKeys),
+    //CatDist("Substitution Tag", makeCategorical(mergeCategorical((r) => r.subTag))),
+    //CatDist("Label Quality", makeCategorical(sumQual((r) => r.labelQV)), qualKeys),
+    //CatDist("Alt Label", makeCategorical(mergeCategorical((r) => r.altLabel))),
+    //CatDist("Alt Label Qual", makeCategorical(sumQual((r) => r.labelQV)), qualKeys),
+    //CatDist("Pulse Merge Qual", makeCategorical(sumQual((r) => r.pulseMergeQV)), qualKeys),
+    CatDist("Pulse Call", makeCategorical(mergeCategorical((r) => r.pulseCall)), callKeys), // true categorical
     // summaries of per-read distributions. TOOD: aggregate across all distributions?
     DistCon("Mean of IPD Frames Mean", calcContinuous(reads.map(_.ipdFrames.mean))),
     Dist("Mean of IPD Frames Median", calcDiscrete(reads.map(_.ipdFrames.median))),
@@ -84,21 +85,24 @@ class AlignedPacBioBam_1_5(p: Path, nBins: Int = 30) extends Metrics {
     Dist("Pre-Pulse Frames", mergeIntDist((r) => r.prePulseFrames))
   )
 
+  val callKeys = List("A", "C", "G", "T")
+  val qualKeys = ('!' to '~').map(_.toString).toList
+
   // stashes the per-read metrics (probably want to export these too sometime?)
   case class PbRead(zmw: Int,
                     accuracy: Float,
                     avgSnrA: Float, avgSnrC: Float, avgSnrG: Float, avgSnrT: Float,
                     // char-base 33+ascii values for quality
-                    delQV: Categorical,
-                    delTag: Categorical,
-                    insQV: Categorical,
-                    mergeQV: Categorical,
-                    subQV: Categorical,
-                    subTag: Categorical,
-                    labelQV: Categorical,
-                    altLabel: Categorical,
-                    altLabelQV: Categorical,
-                    pulseMergeQV: Categorical,
+                    //delQV: Array[Int],
+                    //delTag: Categorical,
+                    //insQV: Array[Int],
+                    //mergeQV: Array[Int],
+                    //subQV: Array[Int],
+                    //subTag: Categorical,
+                    //labelQV: Array[Int],
+                    //altLabel: Categorical,
+                    //altLabelQV: Array[Int],
+                    //pulseMergeQV: Array[Int],
                     // base calls
                     pulseCall: Categorical,
                     // frame counts and related measurements
@@ -119,8 +123,9 @@ class AlignedPacBioBam_1_5(p: Path, nBins: Int = 30) extends Metrics {
 
     (bam.getFileHeader, (for (r <- bam.iterator.asScala) yield Future(parse(r))).toList.map(r => Await.result(r, Duration.Inf)))
   } match {
-    case Success(s) => s
-    case Failure(_) if p == null => (null, null) // support AlignedPacBioBam.blank
+    case Success(s) =>
+      s
+    case Failure(t) if p == null => (null, null) // support AlignedPacBioBam.blank
     case Failure(t) => throw t
   }
 
@@ -136,17 +141,17 @@ class AlignedPacBioBam_1_5(p: Path, nBins: Int = 30) extends Metrics {
       rm("sn").asInstanceOf[Array[Float]](3),
       // println("ZMW Hole Number: "+rm("zm")) // skip, no summary stat here
       // distributions
-      calcCategorical(ListMap(rm("dq").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // DeletionQC=dq
-      calcCategorical(ListMap(rm("dt").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // DeletionTag=dt
-      calcCategorical(ListMap(rm("iq").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // InsertionQV=iq
-      calcCategorical(ListMap(rm("mq").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // MergeQV=mq
-      calcCategorical(ListMap(rm("sq").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // SubstitutionQV=sq
-      calcCategorical(ListMap(rm("st").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // SubstitutionTag=st
-      calcCategorical(ListMap(rm("pq").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // LabelQV
-      calcCategorical(ListMap(rm("pt").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // AltLabel
-      calcCategorical(ListMap(rm("pv").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // AltLabelQV
-      calcCategorical(ListMap(rm("pg").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // PulseMergeQV
-      calcCategorical(ListMap(rm("pc").toString.toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // PulseCall
+      //mapQv(rm("dq").asInstanceOf[String]), // DeletionQV=dq
+      //calcCategorical(Map(rm("dt").asInstanceOf[String].toCharArray.toSeq.groupBy(_.toString).toList: _ *), qualKeys), // DeletionTag=dt
+      //mapQv(rm("iq").asInstanceOf[String]), // InsertionQV=iq
+      //mapQv(rm("mq").asInstanceOf[String]), // MergeQV=mq
+      //mapQv(rm("sq").asInstanceOf[String]), // SubstitutionQV=sq
+      //calcCategorical(Map(rm("st").asInstanceOf[String].toCharArray.toSeq.groupBy(_.toString).toList: _ *), qualKeys), // SubstitutionTag=st
+      //mapQv(rm("pq").asInstanceOf[String]), // LabelQV
+      //calcCategorical(Map(rm("pt").asInstanceOf[String].toCharArray.toSeq.groupBy(_.toString).toList: _ *), qualKeys), // AltLabel
+      //mapQv(rm("pv").asInstanceOf[String]), // AltLabelQV
+      //mapQv(rm("pg").asInstanceOf[String]), // PulseMergeQV
+      calcCategorical(Map(rm("pc").asInstanceOf[String].toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // PulseCall
       calcShort(rm("ip").asInstanceOf[Array[Short]]),
       calcShort(rm("pw").asInstanceOf[Array[Short]]),
       calcShort(rm("pm").asInstanceOf[Array[Short]]),
@@ -162,30 +167,49 @@ class AlignedPacBioBam_1_5(p: Path, nBins: Int = 30) extends Metrics {
   private def pr(key: String) : SAMProgramRecord = header.getProgramRecords.asScala.filter(_.getProgramName == key).head
 
   // char-base 33+ascii values for quality
-  def sumQual(f: (PbRead) => Categorical): ListMap[String, Int] = {
-    ListMap((0 to ('~'.toShort - '!'.toShort)).map(_ + 33).map(_.toChar.toString).map(k => (k, reads.flatMap(r => f(r).bins.get(k)).map(_.asInstanceOf[Int]).sum)): _ *)
+  def mergeCategorical(f: (PbRead) => Categorical): ListMap[String, Int] = {
+    val dists = reads.map(r => f(r))
+    val m = mutable.ListMap[String, Int]()
+    dists.foreach(d => d.bins.foreach{ case (k, v) => m.update(k, m.getOrElse(k,  0) + (v match { case i: Int => i })) })
+    m.asInstanceOf[ListMap[String, Int]]
+    //ListMap((0 to ('~'.toShort - '!'.toShort)).map(_ + 33).map(_.toChar.toString).map(k => (k, reads.flatMap(r => f(r).bins.get(k)).map(_.asInstanceOf[Int]).sum)): _ *)
   }
+
+  // char-base 33+ascii values for quality
+  def sumQual(f: (PbRead) => Array[Int]): ListMap[String, Int] = {
+    // this loops
+    //ListMap((0 to ('~'.toShort - '!'.toShort)).map(_ + 33).map(_.toChar.toString).map(k => (k, reads.flatMap(r => f(r).bins.get(k)).map(_.asInstanceOf[Int]).sum)): _ *)
+    val dists = reads.map(r => f(r))
+    val a =  new Array[Int]('~' - '!')
+    ('~' to '!').map(_ - '!').foreach(i => a(i) = dists.map(d => d(i)).sum)
+    ListMap(('~' to '!').map(c => (c.toString, a(c - '!'))) :_ *)
+  }
+
+  def mapQv(qv: String): Array[Int] = {
+    val a = new Array[Int]('~' - '!')
+    qv.foreach(c => a(c - '!') += 1)
+    a
+    //ListMap(('!' to '~').map(k => (k.toString, a(k-'!'))) :_ *)
+  }
+
 
   // make a giant histogram that summarizes all the per-read ones. gives more insight than mean/median
   def mergeIntDist(f: (PbRead) => Discrete, nBins: Int = 30): Discrete = {
-    val min = reads.map(r => f(r).min).min
-    val max = reads.map(r => f(r).max).max
+    val dists = reads.map(r => f(r)) // dist of interest for all reads
+    val min = dists.map(_.min).min
+    val max = dists.map(_.max).max
     val binWidth = Math.max((max - min) / nBins, 1)
+    // make one array to populate
+    val a = new Array[Int](nBins)
     // convert all dists from (binIndex, count) => (value, count). So all values across all dist are in the same units
-    val indexVal = reads.flatMap(r => Seq(f(r)).flatMap(d => d.bins.zipWithIndex.map{ case (v, i) => (d.min + (i * d.binWidth), v)}))
-    // sum all counts to a new set of bins that uses the min/max of all dists and all values
-    val bins = indexVal.map{ case (v, count) => ((((v - min)/ binWidth).toInt), count)}.groupBy(_._1).map{ case (k, v) => (k, v.map(_._2).sum)}
-    val samples = indexVal.map(_._2).sum
-    Discrete(
-      samples,
-      nBins,
-      binWidth,
-      indexVal.map{ case (v, c) => v * c}.sum.toFloat / samples,
-      -1, // TODO: estimate later by using hist
-      min,
-      max,
-      for ( i <- 0 to (nBins - 1))
-        yield if (i < nBins - 1) bins.getOrElse(i, 0) else bins.getOrElse(i, 0) + bins.getOrElse(i + 1, 0)
+    dists.foreach(
+      d => d.bins.zipWithIndex
+        .map{ case (v, i) => (d.min + (i * d.binWidth), v) }
+        .foreach{ case (v, count) => a(((v - min)/ binWidth)) += count }
     )
+    val samples = a.sum
+    val mean = a.zipWithIndex.map{ case (v, i) =>  (min + (i * binWidth)) * v }.sum.toFloat / samples
+    val median = -1 // TODO: estimate later by using hist
+    Discrete(samples, nBins, binWidth, mean, median, min, max, a)
   }
 }

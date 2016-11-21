@@ -13,7 +13,7 @@ object AlignedPacBioBam {
   lazy val currentVersion = blank.version
 
   // placeholder to support other versions down the road
-  def apply(p: Path): AlignedPacBioBam_1_5 = new AlignedPacBioBam_1_5(p)
+  def apply(p: Path): AlignedPacBioBam_v1_5 = AlignedPacBioBam_v1_5(p)
 }
 
-class AlignedPacBioBam(p: Path) extends AlignedPacBioBam_1_5(p)
+class AlignedPacBioBam(p: Path) extends AlignedPacBioBam_v1_5(p)

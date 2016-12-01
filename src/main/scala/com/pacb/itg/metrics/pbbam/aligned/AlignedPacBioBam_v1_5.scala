@@ -1,6 +1,8 @@
 package com.pacb.itg.metrics.pbbam.aligned
 
-import java.nio.file.{Files, Path}
+import java.io.{BufferedWriter, FileOutputStream, OutputStreamWriter}
+import java.nio.file.{Files, Path, Paths}
+import java.util.zip.GZIPOutputStream
 
 import falkner.jayson.metrics.Distribution._
 import falkner.jayson.metrics.io.CSV
@@ -70,6 +72,8 @@ object AlignedPacBioBam_v1_5 {
     override val values: List[Metric] = List(
       Str("Name", r.name),
       Num("ZMW", r.zmw),
+      Num("x", r.zmw >> 16),  // z = zmwHoleNumber & 0xffff0000 // X: upper 16-bits as per ITG-259
+      Num("y", r.zmw & 0x0000ffff),  // y = zmwHoleNumber & 0x0000ffff  // Y: lower 16-bits as per ITG-259
       Num("Accuracy", r.accuracy),
       Num("Avg SNR A", r.avgSnrA),
       Num("Avg SNR C", r.avgSnrC),
@@ -81,12 +85,24 @@ object AlignedPacBioBam_v1_5 {
   }
 
   def exportReads(reads: Seq[Read], p: Path): Unit = {
-    // TODO: auto-delete on error?
-    val bw = Files.newBufferedWriter(p)
-    Seq(reads.head).map(r => bw.write(CSV(new ReadMetric(r)).all + "\n"))
-    reads.tail.foreach(r => bw.write(CSV(new ReadMetric(r)).values + "\n"))
-    bw.flush()
-    bw.close()
+    val fos = Files.newOutputStream(p)
+    val gzos = new GZIPOutputStream(fos)
+    val osw = new OutputStreamWriter(gzos)
+    val bw = new BufferedWriter(osw)
+    //val bw = Files.newBufferedWriter(p)
+    try {
+      Seq(reads.head).map(r => bw.write(CSV(new ReadMetric(r)).all + "\n"))
+      reads.tail.foreach(r => bw.write(CSV(new ReadMetric(r)).values + "\n"))
+      bw.flush()
+      osw.flush()
+      gzos.flush()
+      fos.flush()
+    } finally {
+      Try(bw.close())
+      Try(osw.close())
+      Try(gzos.close())
+      Try(fos.close())
+    }
   }
 
   case class Chunk(size: Int,
@@ -129,7 +145,10 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
   override val namespace = "PBBAM"
   override val version = s"${AlignedPacBioBam.version}~${AlignedPacBioBam_v1_5.version}"
   override val values: List[Metric] = List(
+    Str("Code Version", AlignedPacBioBam.version),
+    Str("Spec Version", AlignedPacBioBam_v1_5.version),
     // PacBio-specific header BAM info
+    Bool("Internal Mode", internalMode(header)),
     Str("BLASR Version", pr("BLASR").getProgramVersion),
     Str("BLASR Command Line", pr("BLASR").getCommandLine),
     Str("baz2bam Version", pr("baz2bam").getProgramVersion),
@@ -165,12 +184,12 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
     //CatDist("Pulse Merge Qual", makeCategorical(sumQual((r) => r.pulseMergeQV)), qualKeys),
     CatDist("Pulse Call", makeCategorical(mergeCategorical(chunks.map(_.pulseCalls))), callKeys) // true categorical
   ) ++
-  ipdFramesAgg.head.map(_.name).map(n => Dist(n, mergeIntDist(ipdFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(ipdFramesMin), forceMax=Some(ipdFramesMax)))) ++
-  pulseWidthFramesAgg.head.map(_.name).map(n => Dist(n, mergeIntDist(pulseWidthFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pulseWidthFramesMin), forceMax=Some(pulseWidthFramesMax)))) ++
-  pkMidAgg.head.map(_.name).map(n => Dist(n, mergeIntDist(pkMidAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pkMidMin), forceMax=Some(pkMidMax)))) ++
-  pkMeanAgg.head.map(_.name).map(n => Dist(n, mergeIntDist(pkMeanAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pkMeanMin), forceMax=Some(pkMeanMax)))) ++
-  prePulseFramesAgg.head.map(_.name).map(n => Dist(n, mergeIntDist(prePulseFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(prePulseFramesMin), forceMax=Some(prePulseFramesMax)))) ++
-  pulseCallWidthFramesAgg.head.map(_.name).map(n => Dist(n, mergeIntDist(pulseCallWidthFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pulseCallWidthFramesMin), forceMax=Some(pulseCallWidthFramesMax))))
+  ipdFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(ipdFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(ipdFramesMin), forceMax=Some(ipdFramesMax)))) ++
+  pulseWidthFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pulseWidthFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pulseWidthFramesMin), forceMax=Some(pulseWidthFramesMax)))) ++
+  pkMidAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pkMidAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pkMidMin), forceMax=Some(pkMidMax)))) ++
+  pkMeanAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pkMeanAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pkMeanMin), forceMax=Some(pkMeanMax)))) ++
+  prePulseFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(prePulseFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(prePulseFramesMin), forceMax=Some(prePulseFramesMax)))) ++
+  pulseCallWidthFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pulseCallWidthFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pulseCallWidthFramesMin), forceMax=Some(pulseCallWidthFramesMax))))
 
   lazy val callKeys = List("A", "C", "G", "T")
   lazy val qualKeys = ('!' to '~').map(_.toString).toList
@@ -184,7 +203,7 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
   lazy val pulseCallWidthFramesAgg = chunks.map(_.pulseCallWidthFrames)
 
   // can't assume enough mem to buffer everything in-mem. handle chunks here
-  def handleReads(buf: Seq[Read]): Chunk = Chunk(
+  def handleReads(buf: Seq[Read], im: Boolean): Chunk = Chunk(
     buf.size,
     // unique sequencing ZMWs
     buf.map(_.zmw).toSet,
@@ -194,7 +213,7 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
     calcContinuous(buf.map(_.avgSnrG), forceMin=Some(snrMin), forceMax=Some(snrMax)),
     calcContinuous(buf.map(_.avgSnrT), forceMin=Some(snrMin), forceMax=Some(snrMax)),
     // pulse calls
-    makeCategorical(mergeCat(buf, (r) => r.pulseCall)),
+    if (im) makeCategorical(mergeCat(buf, (r) => r.pulseCall)) else blankCategorical,
     // all the per-read metrics
     buf.head.ipdFrames.map(_.name).map(n => NamedDiscrete(n, mergeDisc(buf, (r) => r.ipdFrames.filter(_.name == n).head.dist, ipdFramesMin, ipdFramesMax))),
     buf.head.pulseWidthFrames.map(_.name).map(n => NamedDiscrete(n, mergeDisc(buf, (r) => r.pulseWidthFrames.filter(_.name == n).head.dist, pulseWidthFramesMin, pulseWidthFramesMax))),
@@ -209,25 +228,32 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
   lazy val (header, chunks): (SAMFileHeader, List[Chunk]) = Try {
     val factory = SamReaderFactory.makeDefault().validationStringency(ValidationStringency.SILENT)
     val bam = factory.open(p)
-    
-    (bam.getFileHeader, bam.iterator.asScala.grouped(chunkSize).map(g => Future(g.map(parse))).map(c =>
-      handleReads(Await.result(c, Duration.Inf))).toList)
+
+    val im = internalMode(bam.getFileHeader)
+
+    (bam.getFileHeader, bam.iterator.asScala.grouped(chunkSize).map(g =>
+      handleReads(g.map(r => Future(parse(r, im))).map(fr => Await.result(fr, Duration.Inf)), im)).toList)
   } match {
     case Success(s) =>
+      println("Done processing.")
+      println(s"Made ${s._2.size} chunks")
       s
     case Failure(t) if p == null => (null, null) // support AlignedPacBioBam.blank
     case Failure(t) => throw t
   }
 
-  def parse(r: SAMRecord): Read = {
+  private val blankArray = Array[Short]()
+  private val blankCategorical = Categorical(0, Map[String, AnyVal]())
+
+  def parse(r: SAMRecord, im: Boolean): Read = {
     val rm = r.getAttributes.asScala.map(tv => (tv.tag, tv.value)).toMap
     // PacBio specific metrics passed by Primary
-    val ipdVals = rm("ip").asInstanceOf[Array[Short]]
-    val pulseWidthVals = rm("pw").asInstanceOf[Array[Short]]
-    val pkMidVals = rm("pm").asInstanceOf[Array[Short]]
-    val pkMeanVals = rm("pa").asInstanceOf[Array[Short]]
-    val prePulseVals = rm("pd").asInstanceOf[Array[Short]]
-    val pulseCallVals = rm("px").asInstanceOf[Array[Short]]
+    val ipdVals: Array[Short] = if (im) rm("ip").asInstanceOf[Array[Short]] else rm("ip").asInstanceOf[Array[Byte]].map(_.toShort)
+    val pulseWidthVals: Array[Short] = if (im) rm("pw").asInstanceOf[Array[Short]] else rm("pw").asInstanceOf[Array[Byte]].map(_.toShort)
+    val pkMidVals = if (im) rm("pm").asInstanceOf[Array[Short]] else blankArray
+    val pkMeanVals = if (im) rm("pa").asInstanceOf[Array[Short]] else blankArray
+    val prePulseVals = if (im) rm("pd").asInstanceOf[Array[Short]] else blankArray
+    val pulseCallVals = if (im) rm("px").asInstanceOf[Array[Short]] else blankArray
     val readBases = r.getReadBases
     // map the PB stats by base called -- these are unique to an aligned reference, not in Primary's sts.xml export
     val ipdFrames = new CigarDists("IPD Frames")
@@ -246,10 +272,10 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
         val b = readBases(readIndex) // calc one-time
         ipdFrames.dists(b)(co).append(ipdVals(readIndex))
         pulseWidthFrames.dists(b)(co).append(pulseWidthVals(readIndex))
-        pkMid.dists(b)(co).append(pkMidVals(readIndex))
-        pkMean.dists(b)(co).append(pkMeanVals(readIndex))
-        prePulseFrames.dists(b)(co).append(prePulseVals(readIndex))
-        pulseCallWidthFrames.dists(b)(co).append(pulseCallVals(readIndex))
+        if (im) pkMid.dists(b)(co).append(pkMidVals(readIndex))
+        if (im) pkMean.dists(b)(co).append(pkMeanVals(readIndex))
+        if (im) prePulseFrames.dists(b)(co).append(prePulseVals(readIndex))
+        if (im) pulseCallWidthFrames.dists(b)(co).append(pulseCallVals(readIndex))
         // increment offset, except for deletes and skips -- they don't use a read base
         if (co != "D" && co != "N") readIndex += 1
       }
@@ -275,7 +301,7 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
       //calcCategorical(Map(rm("pt").asInstanceOf[String].toCharArray.toSeq.groupBy(_.toString).toList: _ *), qualKeys), // AltLabel
       //mapQv(rm("pv").asInstanceOf[String]), // AltLabelQV
       //mapQv(rm("pg").asInstanceOf[String]), // PulseMergeQV
-      calcCategorical(Map(rm("pc").asInstanceOf[String].toCharArray.toSeq.groupBy(_.toString).toList: _ *)), // PulseCall
+      if (im) calcCategorical(Map(rm("pc").asInstanceOf[String].toCharArray.toSeq.groupBy(_.toString).toList: _ *)) else blankCategorical, // PulseCall
       ipdFrames.flatten,
       pulseWidthFrames.flatten,
       pkMid.flatten,
@@ -290,9 +316,12 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
 
   private def pr(key: String) : SAMProgramRecord = header.getProgramRecords.asScala.filter(_.getProgramName == key).head
 
-  // char-base 33+ascii values for quality
-  def mergeCat(reads: Seq[Read], f: (Read) => Categorical): Map[String, Int] = {
-    mergeCategorical(reads.map(r => f(r)))
+  private def ds(key: String, header: SAMFileHeader): Option[String] =
+    header.getTextHeader.split("\t").filter(_.startsWith("DS")).flatMap(_.split(";")).filter(_.startsWith(s"$key=")).headOption
+
+  def internalMode(header: SAMFileHeader): Boolean = ds("Ipd:Frames", header) match { // Ipd:Frames=ip == Internal Mode, Ipd:CodecV1=ip == Normal Mode
+    case Some(v) => true
+    case None => false
   }
 
   // char-base 33+ascii values for quality
@@ -309,8 +338,13 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
     a
   }
 
+  // char-base 33+ascii values for quality
+  def mergeCat(reads: Seq[Read], f: (Read) => Categorical): Map[String, Int] = {
+    mergeCategorical(reads.map(r => f(r)))
+  }
+
   // make a giant histogram that summarizes all the per-read ones. gives more insight than mean/median
   def mergeDisc(buf: Seq[Read], f: (Read) => Discrete, min: Int, max: Int): Discrete = {
-    mergeIntDist(buf.map(r => f(r)).filter(_.sampleNum > 0), forceMin=Some(min), forceMax=Some(max)) // dist of interest for all reads
+    mergeDiscrete(buf.map(r => f(r)).filter(_.sampleNum > 0), forceMin=Some(min), forceMax=Some(max)) // dist of interest for all reads
   }
 }

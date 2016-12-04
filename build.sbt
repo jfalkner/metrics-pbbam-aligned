@@ -1,6 +1,6 @@
 name := "itg_metrics_pbbam_aligned"
 
-version in ThisBuild := "0.0.2"
+version in ThisBuild := "0.0.3"
 
 organization in ThisBuild := "com.pacb"
 

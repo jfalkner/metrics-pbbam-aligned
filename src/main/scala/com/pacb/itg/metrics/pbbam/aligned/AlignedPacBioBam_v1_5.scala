@@ -27,14 +27,19 @@ object AlignedPacBioBam_v1_5 {
   val bases = Seq("A", "C", "T", "G")
   val cigarOps = Seq("M", "I", "D", "N", "S", "H", "P", "=", "X")
 
+  def cigarDistsNames(ns: String): Seq[CigarDist] = bases.flatMap(b => cigarOps.map(co => CigarDist(ns, b, co)))
+
+  case class CigarDist(ns: String, b: String, co: String) {
+    override def toString: String = s"$ns: $b: $co"
+  }
+
   class CigarDists(ns: String) {
 
     val dists: Map[Byte, Map[String, mutable.ArrayBuffer[Short]]] =
       Map(bases.map(b => (b.charAt(0).toByte, Map(cigarOps.map(c => (c, mutable.ArrayBuffer[Short]())): _*))): _*)
 
     def flatten(): Seq[NamedDiscrete] =
-      bases.flatMap(b => cigarOps.map(co => NamedDiscrete(s"$ns: $b: $co", calcShort(dists(b.charAt(0).toByte)(co).toArray))))
-
+      cigarDistsNames(ns).map(c => NamedDiscrete(s"${c.ns}: ${c.b}: ${c.co}", calcShort(dists(c.b.charAt(0).toByte)(c.co).toArray)))
   }
 
   case class NamedDiscrete(name: String, dist: Discrete)
@@ -184,12 +189,20 @@ class AlignedPacBioBam_v1_5(p: Path, nBins: Int = 30) extends Metrics {
     //CatDist("Pulse Merge Qual", makeCategorical(sumQual((r) => r.pulseMergeQV)), qualKeys),
     CatDist("Pulse Call", makeCategorical(mergeCategorical(chunks.map(_.pulseCalls))), callKeys) // true categorical
   ) ++
-  ipdFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(ipdFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(ipdFramesMin), forceMax=Some(ipdFramesMax)))) ++
-  pulseWidthFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pulseWidthFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pulseWidthFramesMin), forceMax=Some(pulseWidthFramesMax)))) ++
-  pkMidAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pkMidAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pkMidMin), forceMax=Some(pkMidMax)))) ++
-  pkMeanAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pkMeanAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pkMeanMin), forceMax=Some(pkMeanMax)))) ++
-  prePulseFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(prePulseFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(prePulseFramesMin), forceMax=Some(prePulseFramesMax)))) ++
-  pulseCallWidthFramesAgg.head.map(_.name).map(n => Dist(n, mergeDiscrete(pulseCallWidthFramesAgg.map(_.filter(_.name == n).head.dist), forceMin=Some(pulseCallWidthFramesMin), forceMax=Some(pulseCallWidthFramesMax))))
+    cigarDistAggs("IPD Frames", ipdFramesAgg, ipdFramesMin, ipdFramesMax) ++
+    cigarDistAggs("Pulse Width Frames", pulseWidthFramesAgg, pulseWidthFramesMin, pulseWidthFramesMax) ++
+    cigarDistAggs("PkMid", pkMidAgg, pkMidMin, pkMidMax) ++
+    cigarDistAggs("PkMean", pkMeanAgg, pkMeanMin, pkMeanMax) ++
+    cigarDistAggs("Pre-Pulse Frames", prePulseFramesAgg, prePulseFramesMin, prePulseFramesMax) ++
+    cigarDistAggs("Pulse Call Width Frames", pulseCallWidthFramesAgg, pulseCallWidthFramesMin, pulseCallWidthFramesMax)
+
+  def cigarDistAggs(ns: String, aggs: => Seq[Seq[NamedDiscrete]], min: Int, max: Int): Seq[Dist] =
+    Try {
+      aggs.head.map(_.name).map(n => Dist(n, mergeDiscrete(aggs.map(_.filter(_.name == n).head.dist), forceMin = Some(min), forceMax = Some(max))))
+    } match {
+      case Success(dists) => dists
+      case Failure(_) => new CigarDists(ns).flatten.map(nd => Dist(nd.name, nd.dist))
+    }
 
   lazy val callKeys = List("A", "C", "G", "T")
   lazy val qualKeys = ('!' to '~').map(_.toString).toList

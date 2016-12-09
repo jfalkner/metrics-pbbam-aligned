@@ -6,7 +6,7 @@ import java.nio.file.Path
 object AlignedPacBioBam {
 
   // version of the overall com.pacb.itg.metrics.pbbam.aligned package. should match build.sbt
-  val version = "0.0.3"
+  val version = "0.0.4"
 
   lazy val blank = AlignedPacBioBam(null)
 
